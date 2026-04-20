@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Spendenlauf – Eingabe</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #f0f4f8;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+            padding: 40px 32px;
+            width: 100%;
+            max-width: 480px;
+        }
+
+        .logo {
+            text-align: center;
+            font-size: 48px;
+            margin-bottom: 8px;
+        }
+
+        h1 {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 700;
+            color: #1a202c;
+            margin-bottom: 6px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #718096;
+            font-size: 14px;
+            margin-bottom: 32px;
+        }
+
+        label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #4a5568;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 16px 18px;
+            font-size: 48px;
+            font-weight: 700;
+            text-align: center;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            outline: none;
+            transition: border-color 0.2s;
+            color: #1a202c;
+            margin-bottom: 20px;
+            -moz-appearance: textfield;
+        }
+
+        input::-webkit-inner-spin-button,
+        input::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+        }
+
+        input:focus {
+            border-color: #4299e1;
+        }
+
+        button.submit {
+            width: 100%;
+            padding: 22px;
+            font-size: 20px;
+            font-weight: 700;
+            color: white;
+            background: linear-gradient(135deg, #4299e1, #3182ce);
+            border: none;
+            border-radius: 14px;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+        }
+
+        button.submit:active {
+            transform: scale(0.98);
+            opacity: 0.9;
+        }
+
+        button.submit:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .message {
+            margin-top: 20px;
+            padding: 14px 18px;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            text-align: center;
+            display: none;
+        }
+
+        .message.success {
+            background: #c6f6d5;
+            color: #276749;
+            display: block;
+        }
+
+        .message.error {
+            background: #fed7d7;
+            color: #c53030;
+            display: block;
+        }
+
+        .recent {
+            margin-top: 28px;
+            border-top: 1px solid #e2e8f0;
+            padding-top: 20px;
+        }
+
+        .recent h2 {
+            font-size: 13px;
+            font-weight: 600;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 12px;
+        }
+
+        .recent-list {
+            list-style: none;
+        }
+
+        .recent-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f7fafc;
+            font-size: 15px;
+        }
+
+        .recent-list li:last-child {
+            border-bottom: none;
+        }
+
+        .recent-list .nr {
+            font-weight: 700;
+            color: #2d3748;
+        }
+
+        .recent-list .ts {
+            color: #a0aec0;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="card">
+        <div class="logo">🏃</div>
+        <h1>Stempelstation</h1>
+        <p class="subtitle">Startnummer des Läufers eingeben</p>
+
+        <form id="form" onsubmit="submitEntry(event)">
+            <label for="startnummer">Startnummer</label>
+            <input type="number" id="startnummer" placeholder="42" min="1" required autofocus />
+            <button type="submit" class="submit" id="submitBtn">✓ Runde eintragen</button>
+        </form>
+
+        <div class="message" id="message"></div>
+
+        <div class="recent">
+            <h2>Zuletzt eingetragen</h2>
+            <ul class="recent-list" id="recentList">
+                <li style="color:#a0aec0; font-size:14px;">Noch keine Einträge.</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // ← Deine Google Apps Script URL hier eintragen!
+        const API_URL = "https://script.google.com/macros/s/AKfycbxzTuWHBF8WfrPv_7Z6HhHfi3paJ2oMPgX-klblD6IRU0UfkYuVgbdVAIyNzdIkUWODsA/exec";
+
+        const recent = [];
+
+        async function submitEntry(e) {
+            e.preventDefault();
+            const btn = document.getElementById("submitBtn");
+            const startnummer = document.getElementById("startnummer").value.trim();
+
+            btn.disabled = true;
+            btn.textContent = "Wird gespeichert…";
+
+            try {
+                await fetch(`${API_URL}?action=eintragen&startnummer=${encodeURIComponent(startnummer)}`, {
+                    redirect: "follow",
+                    mode: "no-cors"
+                });
+
+                // no-cors gibt keine Antwort zurück – wir nehmen Erfolg an
+                const now = new Date().toLocaleTimeString("de-DE");
+                showMessage(`✓ Startnummer ${startnummer} – Runde eingetragen!`, "success");
+                addRecent(startnummer, now);
+                document.getElementById("form").reset();
+                document.getElementById("startnummer").focus();
+
+            } catch (err) {
+                showMessage("Verbindungsfehler – bitte nochmal versuchen.", "error");
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "✓ Runde eintragen";
+            }
+        }
+
+        function showMessage(text, type) {
+            const el = document.getElementById("message");
+            el.textContent = text;
+            el.className = "message " + type;
+            setTimeout(() => { el.className = "message"; }, 3000);
+        }
+
+        function addRecent(nr, ts) {
+            recent.unshift({ nr, ts });
+            if (recent.length > 6) recent.pop();
+            document.getElementById("recentList").innerHTML = recent.map(r =>
+                `<li><span class="nr">#${r.nr}</span><span class="ts">${r.ts}</span></li>`
+            ).join("");
+        }
+    </script>
+
+</body>
+
+</html>

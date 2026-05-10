@@ -132,6 +132,71 @@
             display: block;
         }
 
+        /* --- Toast-Benachrichtigungen für Hintergrund-Fehler --- */
+        .toast-container {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+
+        .toast {
+            pointer-events: auto;
+            background: #2d3748;
+            color: #fff;
+            padding: 12px 18px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+            opacity: 0;
+            transform: translateX(40px);
+            animation: toastIn 0.3s ease forwards;
+            max-width: 340px;
+        }
+
+        .toast.toast-error {
+            background: #c53030;
+        }
+
+        .toast.toast-retry {
+            background: #b7791f;
+        }
+
+        .toast.toast-recovered {
+            background: #276749;
+        }
+
+        .toast.toast-out {
+            animation: toastOut 0.3s ease forwards;
+        }
+
+        @keyframes toastIn {
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        @keyframes toastOut {
+            to { opacity: 0; transform: translateX(40px); }
+        }
+
+        /* --- Queue-Status-Indikator --- */
+        .queue-status {
+            margin-top: 10px;
+            text-align: center;
+            font-size: 12px;
+            color: #a0aec0;
+            min-height: 18px;
+            transition: opacity 0.3s;
+        }
+
+        .queue-status.active {
+            color: #b7791f;
+        }
+
         .recent {
             margin-top: 28px;
             border-top: 1px solid #e2e8f0;
@@ -172,10 +237,29 @@
             color: #a0aec0;
             font-size: 12px;
         }
+
+        .recent-list .status {
+            font-size: 11px;
+            margin-left: 6px;
+        }
+
+        .recent-list .status.pending {
+            color: #b7791f;
+        }
+
+        .recent-list .status.sent {
+            color: #276749;
+        }
+
+        .recent-list .status.failed {
+            color: #c53030;
+        }
     </style>
 </head>
 
 <body>
+
+    <div class="toast-container" id="toastContainer"></div>
 
     <div class="card">
         <div class="logo">🏃</div>
@@ -189,6 +273,7 @@
         </form>
 
         <div class="message" id="message"></div>
+        <div class="queue-status" id="queueStatus"></div>
 
         <div class="recent">
             <h2>Zuletzt eingetragen</h2>
@@ -204,48 +289,133 @@
 
         const recent = [];
 
-        async function submitEntry(e) {
-            e.preventDefault();
-            const btn = document.getElementById("submitBtn");
-            const startnummer = document.getElementById("startnummer").value.trim();
+        // ── Retry-Queue ──────────────────────────────────────
+        const MAX_RETRIES = 3;
+        const BASE_DELAY_MS = 1500;      // 1.5s → 3s → 6s (exponential backoff)
+        const sendQueue = [];             // { startnummer, retries, id }
+        let queueProcessing = false;
 
-            btn.disabled = true;
-            btn.textContent = "Wird gespeichert…";
+        function enqueue(startnummer) {
+            const id = Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+            sendQueue.push({ startnummer, retries: 0, id });
+            processQueue();
+            return id;
+        }
 
-            try {
-                await fetch(`${API_URL}?action=eintragen&startnummer=${encodeURIComponent(startnummer)}`, {
-                    redirect: "follow",
-                    mode: "no-cors"
-                });
+        async function processQueue() {
+            if (queueProcessing || sendQueue.length === 0) return;
+            queueProcessing = true;
+            updateQueueStatus();
 
-                // no-cors gibt keine Antwort zurück – wir nehmen Erfolg an
-                const now = new Date().toLocaleTimeString("de-DE");
-                showMessage(`✓ Startnummer ${startnummer} – Runde eingetragen!`, "success");
-                addRecent(startnummer, now);
-                document.getElementById("form").reset();
-                document.getElementById("startnummer").focus();
-
-            } catch (err) {
-                showMessage("Verbindungsfehler – bitte nochmal versuchen.", "error");
-            } finally {
-                btn.disabled = false;
-                btn.textContent = "✓ Runde eintragen";
+            while (sendQueue.length > 0) {
+                const item = sendQueue[0];
+                try {
+                    await fetch(
+                        `${API_URL}?action=eintragen&startnummer=${encodeURIComponent(item.startnummer)}`,
+                        { redirect: "follow", mode: "no-cors" }
+                    );
+                    // no-cors → kein lesbarer Response, Erfolg annehmen
+                    sendQueue.shift();
+                    updateRecentStatus(item.id, 'sent');
+                    if (item.retries > 0) {
+                        showToast(`#${item.startnummer} nachträglich gesendet ✓`, 'recovered');
+                    }
+                } catch (err) {
+                    item.retries++;
+                    if (item.retries >= MAX_RETRIES) {
+                        sendQueue.shift();
+                        updateRecentStatus(item.id, 'failed');
+                        showToast(`#${item.startnummer} konnte nicht gesendet werden (${MAX_RETRIES}× versucht)`, 'error');
+                    } else {
+                        showToast(`#${item.startnummer} – Retry ${item.retries}/${MAX_RETRIES}…`, 'retry');
+                        const delay = BASE_DELAY_MS * Math.pow(2, item.retries - 1);
+                        await sleep(delay);
+                    }
+                }
+                updateQueueStatus();
             }
+
+            queueProcessing = false;
+            updateQueueStatus();
+        }
+
+        function sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        }
+
+        function updateQueueStatus() {
+            const el = document.getElementById('queueStatus');
+            if (sendQueue.length === 0) {
+                el.textContent = '';
+                el.classList.remove('active');
+            } else {
+                el.textContent = `⏳ ${sendQueue.length} ${sendQueue.length === 1 ? 'Eintrag wird' : 'Einträge werden'} gesendet…`;
+                el.classList.add('active');
+            }
+        }
+
+        // ── Toast-Benachrichtigungen ─────────────────────────
+        function showToast(text, type = 'error') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = text;
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('toast-out');
+                toast.addEventListener('animationend', () => toast.remove());
+            }, 4000);
+        }
+
+        // ── Hauptlogik: Fire-and-Forget ──────────────────────
+        function submitEntry(e) {
+            e.preventDefault();
+            const input = document.getElementById("startnummer");
+            const startnummer = input.value.trim();
+            if (!startnummer) return;
+
+            // Sofort: UI-Feedback, Feld leeren, Fokus zurück
+            const now = new Date().toLocaleTimeString("de-DE");
+            showMessage(`✓ Startnummer ${startnummer} – Runde eingetragen!`, "success");
+            const queueId = enqueue(startnummer);
+            addRecent(startnummer, now, queueId);
+            document.getElementById("form").reset();
+            input.focus();
+
+            // Button wird NIE blockiert – sofort bereit für nächste Eingabe
         }
 
         function showMessage(text, type) {
             const el = document.getElementById("message");
             el.textContent = text;
             el.className = "message " + type;
-            setTimeout(() => { el.className = "message"; }, 3000);
+            setTimeout(() => { el.className = "message"; }, 2500);
         }
 
-        function addRecent(nr, ts) {
-            recent.unshift({ nr, ts });
-            if (recent.length > 6) recent.pop();
-            document.getElementById("recentList").innerHTML = recent.map(r =>
-                `<li><span class="nr">#${r.nr}</span><span class="ts">${r.ts}</span></li>`
-            ).join("");
+        function addRecent(nr, ts, id) {
+            recent.unshift({ nr, ts, id, status: 'pending' });
+            if (recent.length > 8) recent.pop();
+            renderRecent();
+        }
+
+        function updateRecentStatus(id, status) {
+            const entry = recent.find(r => r.id === id);
+            if (entry) {
+                entry.status = status;
+                renderRecent();
+            }
+        }
+
+        function renderRecent() {
+            const statusIcons = { pending: '⏳', sent: '✓', failed: '✗' };
+            document.getElementById("recentList").innerHTML = recent.map(r => {
+                const icon = statusIcons[r.status] || '';
+                return `<li>
+                    <span class="nr">#${r.nr} <span class="status ${r.status}">${icon}</span></span>
+                    <span class="ts">${r.ts}</span>
+                </li>`;
+            }).join("");
         }
     </script>
 
